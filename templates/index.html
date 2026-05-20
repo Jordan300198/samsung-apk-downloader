@@ -1,0 +1,306 @@
+<!DOCTYPE html>
+<html lang="fr" data-theme="dark">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Samsung APK Downloader — Galaxy Store Web</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800;900&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}">
+</head>
+<body>
+
+<!-- ── Animated background ── -->
+<div class="bg-container">
+  <div class="bg-circle c1"></div>
+  <div class="bg-circle c2"></div>
+  <div class="bg-circle c3"></div>
+  <div class="bg-circle c4"></div>
+  <div class="grid-overlay"></div>
+</div>
+
+<!-- ── Navigation ── -->
+<nav class="glass-nav" id="navbar">
+  <div class="nav-inner">
+    <div class="nav-brand" onclick="navigate('home')">
+      <div class="brand-icon">⬇️</div>
+      <div class="brand-text">
+        <span class="brand-title">APK Downloader</span>
+        <span class="brand-sub">Galaxy Store</span>
+      </div>
+    </div>
+    <div class="nav-links">
+      <a class="nav-link active" data-page="home" onclick="navigate('home')">🏠 Accueil</a>
+      <a class="nav-link" data-page="scan" onclick="navigate('scan')">🔍 Scan</a>
+      <a class="nav-link" data-page="history" onclick="navigate('history')">📜 Historique</a>
+      <a class="nav-link" data-page="about" onclick="navigate('about')">ℹ️ À propos</a>
+    </div>
+    <button class="theme-toggle" onclick="toggleTheme()" title="Changer le thème">🌓</button>
+    <button class="menu-toggle" onclick="toggleMobileMenu()">☰</button>
+  </div>
+</nav>
+
+<!-- ── Main Content ── -->
+<main id="app">
+
+  <!-- ═══════════════════ HOME ═══════════════════ -->
+  <section class="page active" id="page-home">
+    <div class="hero-section">
+      <div class="hero-content animate-fade-up">
+        <div class="hero-badge">🚀 v4.0 — Galaxy Store API</div>
+        <h1 class="hero-title">
+          Samsung <span class="gradient-text">APK Downloader</span>
+        </h1>
+        <p class="hero-desc">
+          Téléchargez n'importe quelle APK Samsung directement depuis le Galaxy Store.
+          Scanne tous les appareils × CSCs en parallèle pour la version la plus récente.
+        </p>
+      </div>
+
+      <!-- Search Card -->
+      <div class="glass-card search-card animate-fade-up" style="animation-delay: 0.15s">
+        <!-- AI Status Badge -->
+        <div class="ai-status-bar" id="ai-status-bar">
+          <span class="ai-indicator" id="ai-indicator">⚪</span>
+          <span id="ai-status-text">Vérification IA ...</span>
+        </div>
+        <div class="search-mode-tabs">
+          <button class="tab-btn active" data-tab="search" onclick="switchSearchTab('search')">🔍 Rechercher</button>
+          <button class="tab-btn" data-tab="browse" onclick="switchSearchTab('browse')">📂 Par catégorie</button>
+          <button class="tab-btn" data-tab="manual" onclick="switchSearchTab('manual')">⌨️ Manuel</button>
+        </div>
+
+        <!-- Search Tab -->
+        <div class="tab-content active" id="tab-search">
+          <div class="search-box">
+            <input type="text" id="search-input" class="input-glass"
+                   placeholder="Nom de l'app ou package (ex: Samsung Notes, com.samsung.android.app.notes)..."
+                   autocomplete="off"
+                   oninput="debounceSearch()"
+                   onfocus="showSearchResults()">
+            <button class="search-btn" onclick="triggerSearch()">🔍</button>
+          </div>
+          <div id="search-results" class="search-results"></div>
+        </div>
+
+        <!-- Browse Tab -->
+        <div class="tab-content" id="tab-browse">
+          <div id="categories-grid" class="categories-grid">
+            <div class="loading-spinner">Chargement des catégories...</div>
+          </div>
+          <div id="category-items" class="category-items" style="display:none">
+            <button class="back-btn" onclick="backToCategories()">← Retour aux catégories</button>
+            <div id="category-items-list"></div>
+          </div>
+        </div>
+
+        <!-- Manual Tab -->
+        <div class="tab-content" id="tab-manual">
+          <p class="manual-hint">Entrez n'importe quel <strong>package name</strong> Android.</p>
+          <div class="manual-input-group">
+            <input type="text" id="manual-input" class="input-glass"
+                   placeholder="com.samsung.android.app.notes"
+                   onkeydown="if(event.key==='Enter') checkManualPackage()">
+            <button class="btn-primary" onclick="checkManualPackage()">
+              <span>🔍</span> Vérifier
+            </button>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Config Panel -->
+    <div class="config-panel animate-fade-up" style="animation-delay: 0.3s">
+      <div class="config-header" onclick="toggleConfig()">
+        <span>⚙️ Configuration avancée</span>
+        <span class="config-arrow">▼</span>
+      </div>
+      <div class="config-body" id="config-body">
+        <div class="config-grid">
+          <div class="config-item">
+            <label>📡 Région</label>
+            <select id="region-select" class="select-glass" onchange="updateDevices()">
+              <option value="all">🌍 Toutes</option>
+              <option value="EU">🇪🇺 Europe</option>
+              <option value="CN">🇨🇳 Chine</option>
+            </select>
+          </div>
+          <div class="config-item">
+            <label>📱 One UI</label>
+            <select id="oneui-select" class="select-glass">
+              <option value="7">One UI 7 · SDK 35</option>
+              <option value="8">One UI 8 · SDK 36</option>
+              <option value="8.5" selected>One UI 8.5 · SDK 36</option>
+              <option value="9">One UI 9 · SDK 37</option>
+            </select>
+          </div>
+          <div class="config-item">
+            <label>📱 Appareil (optionnel)</label>
+            <select id="device-select" class="select-glass">
+              <option value="">🔄 Auto (tous les appareils)</option>
+            </select>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Result Panel -->
+    <div id="result-panel" class="result-panel animate-fade-up" style="display:none">
+      <div id="result-content"></div>
+    </div>
+  </section>
+
+  <!-- ═══════════════════ SCAN ═══════════════════ -->
+  <section class="page" id="page-scan">
+    <div class="page-header animate-fade-up">
+      <h2>🔍 Scan complet</h2>
+      <p>Scanne toutes les apps Samsung connues pour trouver les dernières versions disponibles.</p>
+    </div>
+
+    <div class="scan-controls glass-card animate-fade-up" style="animation-delay: 0.1s">
+      <div class="scan-config">
+        <div class="config-item">
+          <label>📡 Région</label>
+          <select id="scan-region" class="select-glass">
+            <option value="all">🌍 Toutes</option>
+            <option value="EU">🇪🇺 Europe</option>
+            <option value="CN">🇨🇳 Chine</option>
+          </select>
+        </div>
+        <div class="config-item">
+          <label>📱 One UI</label>
+          <select id="scan-oneui" class="select-glass">
+            <option value="7">One UI 7</option>
+            <option value="8">One UI 8</option>
+            <option value="8.5" selected>One UI 8.5</option>
+            <option value="9">One UI 9</option>
+          </select>
+        </div>
+        <div class="config-item">
+          <label>📂 Catégorie (optionnel)</label>
+          <select id="scan-category" class="select-glass">
+            <option value="">🔓 Toutes les catégories</option>
+          </select>
+        </div>
+      </div>
+      <button class="btn-primary btn-scan" onclick="startScan()">
+        <span class="btn-icon">🚀</span>
+        <span class="btn-text">Lancer le scan</span>
+      </button>
+    </div>
+
+    <!-- Scan Progress -->
+    <div id="scan-progress" class="scan-progress glass-card animate-fade-up" style="display:none">
+      <div class="progress-header">
+        <div class="progress-title">🔍 Scan en cours...</div>
+        <div class="progress-status" id="scan-status">Analyse...</div>
+      </div>
+      <div class="progress-bar-container">
+        <div class="progress-bar" id="scan-progress-bar">
+          <div class="progress-glow"></div>
+        </div>
+      </div>
+      <div class="progress-info">
+        <span id="scan-progress-text">0 / 0</span>
+        <span id="scan-percent">0%</span>
+      </div>
+      <div class="scan-current" id="scan-current-app">Préparation...</div>
+      <div class="scan-stats">
+        <div class="stat">
+          <span class="stat-value" id="scan-found-count">0</span>
+          <span class="stat-label">Trouvées</span>
+        </div>
+        <div class="stat">
+          <span class="stat-value" id="scan-notfound-count">0</span>
+          <span class="stat-label">Non trouvées</span>
+        </div>
+      </div>
+    </div>
+
+    <!-- Scan Results -->
+    <div id="scan-results" class="scan-results animate-fade-up" style="display:none">
+      <div class="results-header">
+        <h3>📊 Résultats</h3>
+        <div class="results-actions">
+          <button class="btn-secondary" onclick="exportScanJSON()">📥 JSON</button>
+          <button class="btn-secondary" onclick="exportScanCSV()">📊 CSV</button>
+        </div>
+      </div>
+      <div class="results-table-wrapper" id="scan-results-table"></div>
+    </div>
+  </section>
+
+  <!-- ═══════════════════ HISTORY ═══════════════════ -->
+  <section class="page" id="page-history">
+    <div class="page-header animate-fade-up">
+      <h2>📜 Historique des téléchargements</h2>
+      <p>Toutes les APKs téléchargées via cette plateforme.</p>
+    </div>
+    <div class="history-actions animate-fade-up">
+      <button class="btn-secondary" onclick="refreshHistory()">🔄 Actualiser</button>
+      <button class="btn-danger" onclick="clearHistory()">🗑️ Effacer</button>
+    </div>
+    <div id="history-list" class="history-list animate-fade-up">
+      <div class="loading-spinner">Chargement...</div>
+    </div>
+  </section>
+
+  <!-- ═══════════════════ ABOUT ═══════════════════ -->
+  <section class="page" id="page-about">
+    <div class="page-header animate-fade-up">
+      <h2>ℹ️ À propos</h2>
+    </div>
+    <div class="about-content glass-card animate-fade-up">
+      <div class="about-logo">⬇️</div>
+      <h3>Samsung APK Downloader</h3>
+      <p class="about-version">v4.0.0</p>
+      <p class="about-desc">
+        Plateforme web pour télécharger les APKs Samsung directement depuis le Galaxy Store.
+        Utilise l'API officielle <code>vas.samsungapps.com/earth/stub/stubDownload.as</code>
+        pour scanner tous les appareils × CSCs en parallèle.
+      </p>
+      <div class="about-features">
+        <div class="about-feature">🔍 Scan de 150+ apps Samsung</div>
+        <div class="about-feature">📱 Compatible S22 → S26, Z Fold/Flip, Tab S, A series</div>
+        <div class="about-feature">🌍 Multi-régions (EU, CN, Global)</div>
+        <div class="about-feature">⚡ Téléchargement parallèle haute vitesse</div>
+        <div class="about-feature">📊 Export JSON / CSV</div>
+        <div class="about-feature">🔄 Vérification des mises à jour</div>
+      </div>
+      <div class="about-credit">
+        Créé par <strong>T H E   B R A C K A R D</strong>
+      </div>
+    </div>
+  </section>
+
+</main>
+
+<!-- ── Download Modal ── -->
+<div id="download-modal" class="modal-overlay" onclick="closeModalOutside(event)">
+  <div class="modal-content glass-card animate-scale">
+    <div class="modal-header">
+      <span class="modal-icon">⬇️</span>
+      <h3 id="modal-title">Téléchargement</h3>
+      <button class="modal-close" onclick="closeModal()">✕</button>
+    </div>
+    <div class="modal-body" id="modal-body">
+      <div class="download-progress">
+        <div class="dl-bar-container">
+          <div class="dl-bar" id="dl-bar"></div>
+        </div>
+        <div class="dl-info">
+          <span id="dl-size">0 B</span>
+          <span id="dl-speed">—</span>
+        </div>
+      </div>
+      <div id="modal-result" style="display:none"></div>
+    </div>
+  </div>
+</div>
+
+<!-- ── Toast ── -->
+<div id="toast-container"></div>
+
+<script src="{{ url_for('static', filename='js/app.js') }}"></script>
+</body>
+</html>
