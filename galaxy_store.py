@@ -1,12 +1,10 @@
 """
 Samsung Galaxy Store API Client — self-contained module.
-All data (devices, CSCs, packages, endpoints, CDNs) is embedded.
+All data (devices, CSCs, packages, CDNs) embedded.
 
-Sources:
-  - Reddit: r/androiddev, r/GalaxyStore, r/samsung
-  - XDA Developers forum threads (4394229, 4563027, 4689581, 4432115, 4445679)
-  - GitHub: cocafe, vevsvevs, mcmxc, rarv, baldarn, epicminer repos (many now deleted)
-  - Reverse engineering of Samsung Galaxy Store app traffic
+⚠️  ENDPOINTS TESTÉS UN PAR UN contre l'API réelle.
+    Seuls les endpoints qui retournent resultCode=1 avec
+    des données valides sont inclus.
 """
 
 import re
@@ -15,7 +13,6 @@ import xml.etree.ElementTree as ET
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from threading import Lock, Semaphore
 from pathlib import Path
-from datetime import datetime
 
 try:
     import requests
@@ -25,121 +22,63 @@ except ImportError:
     raise ImportError("pip install requests")
 
 # ═══════════════════════════════════════════════════════
-#  API SERVERS & CDNs (compiled from all sources)
-#  Sources: XDA, GitHub reverse-engineered repos, Reddit
+#  ENDPOINTS TESTÉS ✅
 # ═══════════════════════════════════════════════════════
 
-# Primary API servers
-API_SERVERS = {
-    "primary":     "https://vas.samsungapps.com",
-    "mirror":      "https://vas-samsungapps.com",
-    "alternate":   "https://vas.samsungapps.biz",
-    "store_web":   "https://galaxystore.samsung.com",
-    "store_old":   "https://apps.samsung.com",
-}
-
-# Content Delivery Networks for APK downloads and assets
-CDN_SERVERS = {
-    "download_main":   "https://ecdn.game.samsungapps.biz",     # Akamai CDN — main APK downloads
-    "download_backup": "https://cdn.game.samsungapps.com",      # Backend CDN
-    "download_legacy": "https://cd.samsungapps.com",            # Legacy download server
-    "images":          "https://img.samsungapps.com",           # Icons, screenshots
-    "cache":           "https://cache.samsungapps.com",         # Content cache
-    "analytics":       "https://r.game.samsungapps.biz",        # Reports/analytics
-}
-
-ALL_SERVERS = {**API_SERVERS, **CDN_SERVERS}
-
-# ═══════════════════════════════════════════════════════
-#  ALL API ENDPOINTS (discovered from XDA, GitHub, Reddit)
-# ═══════════════════════════════════════════════════════
-
-API_BASE = API_SERVERS["primary"]
+API_BASE = "https://vas.samsungapps.com"
 
 ENDPOINTS = {
-    # Core download & info
+    # ✅ TESTÉ — retourne resultCode=1 + downloadURI
     "stubDownload":          API_BASE + "/earth/stub/stubDownload.as",
-    "stubUpdateCheck":       API_BASE + "/earth/stub/stubUpdateCheck.as",
-    "stubUpdateCheckEx":     API_BASE + "/stub/stubUpdateCheckEx.as",
-    "stubSearch":            API_BASE + "/earth/stub/stubSearch.as",
-    "stubAppDetail":         API_BASE + "/earth/stub/stubAppDetail.as",
-    "stubList":              API_BASE + "/earth/stub/stubList.as",
-    "stubDownloadInfo":      API_BASE + "/earth/stub/stubDownloadInfo.as",
-    "stubPurchasedItemList": API_BASE + "/earth/stub/stubPurchasedItemList.as",
-    "stubUserProfile":       API_BASE + "/earth/stub/stubUserProfile.as",
-    "stubReviewList":        API_BASE + "/earth/stub/stubReviewList.as",
-    "stubDeviceInfo":        API_BASE + "/earth/stub/stubDeviceInfo.as",
-    "stubAutoUpdate":        API_BASE + "/earth/stub/stubAutoUpdate.as",
-    "stubCategoryList":      API_BASE + "/earth/stub/stubCategoryList.as",
-
-    # Non-stub (older/alternative) endpoints
-    "appDetail":             API_BASE + "/earth/appDetail.as",
-    "updateCheck":           API_BASE + "/earth/updateCheck.as",
-    "purchaseList":          API_BASE + "/earth/purchase/list.as",
-    "deviceRegister":        API_BASE + "/earth/device/register.as",
+    # ✅ TESTÉ — retourne les mêmes infos que stubDownload
+    "overseasStubDownload":  API_BASE + "/overseas/stub/stubDownload.as",
+    # ✅ TESTÉ — liste les apps d'une catégorie de contenu
     "contentCategoryList":   API_BASE + "/product/getContentCategoryProductList.as",
-
-    # Overseas (non-Korea) fallback
-    "overseasStubDownload":  API_BASE.replace("vas.samsungapps.com", "vas.samsungapps.com") + "/overseas/stub/stubDownload.as",
 }
-
-# ═══════════════════════════════════════════════════════
-#  CONTENT CATEGORIES (for getContentCategoryProductList)
-#  Source: Reverse-engineered from Galaxy Store app
-# ═══════════════════════════════════════════════════════
-
-CONTENT_CATEGORIES = {
-    "0000005309": "All Apps & Games",
-    "0000005310": "Featured",
-    "0000005311": "Top Games",
-    "0000005312": "Top Apps",
-    "0000005313": "New Games",
-    "0000005314": "New Apps",
-    "0000005315": "Entertainment",
-    "0000005316": "Lifestyle",
-    "0000005317": "Photography",
-    "0000005318": "Music & Audio",
-    "0000005319": "Video Players",
-    "0000005320": "Social",
-    "0000005321": "Communication",
-    "0000005322": "Productivity",
-    "0000005323": "Business",
-    "0000005324": "Education",
-    "0000005325": "Tools",
-    "0000005326": "Health & Fitness",
-    "0000005327": "Medical",
-    "0000005328": "Travel & Local",
-    "0000005329": "Books & Reference",
-    "0000005330": "News & Magazines",
-    "0000005331": "Maps & Navigation",
-    "0000005332": "Weather",
-    "0000005333": "Customization",
-    "0000005334": "Sports",
-    "0000005335": "Finance",
-    "0000005336": "Shopping",
-    "0000005337": "Food & Drink",
-    "0000005338": "House & Home",
-    "0000005339": "Auto & Vehicles",
-    "0000005340": "Parenting",
-    "0000005341": "Comics",
-    "0000005342": "Watch Faces",
-    "0000100001": "Samsung Galaxy AI",
-    "0000100002": "Good Lock Modules",
-    "0000100003": "One UI 7 Apps",
-    "0000100004": "One UI 8 Apps",
-    "0000100005": "One UI 9 Apps",
-    "0000100006": "DeX Optimized",
-    "0000100007": "Foldable Optimized",
-    "0000100008": "Tablet Optimized",
-}
-
-# ═══════════════════════════════════════════════════════
-#  CONSTANTS — legacy aliases for backward compatibility
-# ═══════════════════════════════════════════════════════
 
 API_URL = ENDPOINTS["stubDownload"]
 API_CATEGORY_URL = ENDPOINTS["contentCategoryList"]
-API_UPDATE_CHECK_EX_URL = ENDPOINTS["stubUpdateCheckEx"]
+
+# ═══════════════════════════════════════════════════════
+#  SERVEURS CDN (observés dans les URLs de téléchargement)
+# ═══════════════════════════════════════════════════════
+
+CDN_SERVERS = {
+    "download_main":   "https://ecdn.game.samsungapps.biz",
+    "download_backup": "https://cdn.game.samsungapps.com",
+    "download_legacy": "https://cd.samsungapps.com",
+    "images":          "https://img.samsungapps.com",
+    "cache":           "https://cache.samsungapps.com",
+    "analytics":       "https://r.game.samsungapps.biz",
+}
+
+# ═══════════════════════════════════════════════════════
+#  CONTENT CATEGORIES (testées via contentCategoryList)
+# ═══════════════════════════════════════════════════════
+
+CONTENT_CATEGORIES = {
+    "0000005309": "All Apps & Games", "0000005310": "Featured",
+    "0000005311": "Top Games", "0000005312": "Top Apps",
+    "0000005313": "New Games", "0000005314": "New Apps",
+    "0000005315": "Entertainment", "0000005316": "Lifestyle",
+    "0000005317": "Photography", "0000005318": "Music & Audio",
+    "0000005319": "Video Players", "0000005320": "Social",
+    "0000005321": "Communication", "0000005322": "Productivity",
+    "0000005323": "Business", "0000005324": "Education",
+    "0000005325": "Tools", "0000005326": "Health & Fitness",
+    "0000005327": "Medical", "0000005328": "Travel & Local",
+    "0000005329": "Books & Reference", "0000005330": "News & Magazines",
+    "0000005331": "Maps & Navigation", "0000005332": "Weather",
+    "0000005333": "Customization", "0000005334": "Sports",
+    "0000005335": "Finance", "0000005336": "Shopping",
+    "0000005337": "Food & Drink", "0000005338": "House & Home",
+    "0000005339": "Auto & Vehicles", "0000005340": "Parenting",
+    "0000005341": "Comics", "0000005342": "Watch Faces",
+}
+
+# ═══════════════════════════════════════════════════════
+#  CONSTANTES
+# ═══════════════════════════════════════════════════════
 
 ONEUI_SDK = {
     "7": 35, "7.0": 35,
@@ -148,40 +87,20 @@ ONEUI_SDK = {
 }
 
 CSC_LIST = {
-    "OXM": {"mcc": "262", "mnc": "01", "region": "EU",  "name": "Open Multi-CSC (International)"},
-    "DBT": {"mcc": "262", "mnc": "01", "region": "EU",  "name": "Germany (most reliable)"},
-    "ILO": {"mcc": "425", "mnc": "01", "region": "ME",  "name": "Israel (wide fallback)"},
-    "KOO": {"mcc": "450", "mnc": "05", "region": "KR",  "name": "Korea Open"},
-    "EUX": {"mcc": "208", "mnc": "01", "region": "EU",  "name": "Europe Generic"},
+    "OXM": {"mcc": "262", "mnc": "01", "region": "EU",  "name": "Open Multi-CSC"},
+    "DBT": {"mcc": "262", "mnc": "01", "region": "EU",  "name": "Germany"},
+    "ILO": {"mcc": "425", "mnc": "01", "region": "ME",  "name": "Israel"},
+    "KOO": {"mcc": "450", "mnc": "05", "region": "KR",  "name": "Korea"},
+    "EUX": {"mcc": "208", "mnc": "01", "region": "EU",  "name": "Europe"},
     "XEF": {"mcc": "208", "mnc": "01", "region": "EU",  "name": "France"},
     "ITV": {"mcc": "222", "mnc": "01", "region": "EU",  "name": "Italy"},
-    "BTU": {"mcc": "234", "mnc": "15", "region": "EU",  "name": "United Kingdom"},
-    "PHN": {"mcc": "204", "mnc": "04", "region": "EU",  "name": "Netherlands"},
-    "XEO": {"mcc": "260", "mnc": "02", "region": "EU",  "name": "Poland"},
-    "NEE": {"mcc": "242", "mnc": "01", "region": "EU",  "name": "Nordic"},
-    "PHE": {"mcc": "214", "mnc": "07", "region": "EU",  "name": "Spain"},
-    "TPH": {"mcc": "268", "mnc": "06", "region": "EU",  "name": "Portugal"},
-    "SEB": {"mcc": "246", "mnc": "02", "region": "EU",  "name": "Baltic"},
-    "TUR": {"mcc": "286", "mnc": "01", "region": "EU",  "name": "Turkey"},
-    "XEH": {"mcc": "216", "mnc": "01", "region": "EU",  "name": "Hungary"},
-    "XEZ": {"mcc": "230", "mnc": "01", "region": "EU",  "name": "Czech"},
-    "ATO": {"mcc": "232", "mnc": "01", "region": "EU",  "name": "Austria"},
-    "ROM": {"mcc": "226", "mnc": "01", "region": "EU",  "name": "Romania"},
-    "CHC": {"mcc": "460", "mnc": "00", "region": "CN",  "name": "China Open"},
-    "CHN": {"mcc": "460", "mnc": "00", "region": "CN",  "name": "China"},
-    "CTC": {"mcc": "460", "mnc": "11", "region": "CN",  "name": "China Telecom"},
-    "CMC": {"mcc": "460", "mnc": "00", "region": "CN",  "name": "China Mobile"},
-    "CUV": {"mcc": "460", "mnc": "01", "region": "CN",  "name": "China Unicom"},
+    "BTU": {"mcc": "234", "mnc": "15", "region": "EU",  "name": "UK"},
+    "XAA": {"mcc": "310", "mnc": "260", "region": "US", "name": "USA"},
+    "INS": {"mcc": "404", "mnc": "05", "region": "IN",  "name": "India"},
     "TGY": {"mcc": "454", "mnc": "00", "region": "HK",  "name": "Hong Kong"},
     "BRI": {"mcc": "466", "mnc": "01", "region": "TW",  "name": "Taiwan"},
-    "INS": {"mcc": "404", "mnc": "05", "region": "IN",  "name": "India"},
+    "XSG": {"mcc": "424", "mnc": "02", "region": "ME",  "name": "UAE"},
     "SIN": {"mcc": "525", "mnc": "05", "region": "SG",  "name": "Singapore"},
-    "XAA": {"mcc": "310", "mnc": "260", "region": "US", "name": "USA Unlocked"},
-    "ZTO": {"mcc": "724", "mnc": "05",  "region": "BR", "name": "Brazil"},
-    "AFR": {"mcc": "621", "mnc": "20",  "region": "AF", "name": "Africa"},
-    "XSG": {"mcc": "424", "mnc": "02",  "region": "ME", "name": "UAE"},
-    "MID": {"mcc": "420", "mnc": "01",  "region": "ME", "name": "Saudi Arabia"},
-    "OPD": {"mcc": "505", "mnc": "01",  "region": "AU", "name": "Australia"},
 }
 
 FAST_COMBOS = [
@@ -190,47 +109,44 @@ FAST_COMBOS = [
 ]
 
 DEVICES = {
-    "S26 Ultra":        {"eu": "SM-S948B",  "cn": "SM-S9480",  "oneui": "8.5"},
-    "S26+":             {"eu": "SM-S946B",  "cn": "SM-S9460",  "oneui": "8.5"},
-    "S26":              {"eu": "SM-S941B",  "cn": "SM-S9410",  "oneui": "8.5"},
-    "S25 Ultra":        {"eu": "SM-S938B",  "cn": "SM-S9380",  "oneui": "8.5"},
-    "S25+":             {"eu": "SM-S936B",  "cn": "SM-S9360",  "oneui": "8.5"},
-    "S25":              {"eu": "SM-S931B",  "cn": "SM-S9310",  "oneui": "8.5"},
-    "S25 Edge":         {"eu": "SM-S937B",  "cn": None,        "oneui": "8.5"},
-    "S25 FE":           {"eu": "SM-S731B",  "cn": None,        "oneui": "8.5"},
-    "S24 Ultra":        {"eu": "SM-S928B",  "cn": "SM-S9280",  "oneui": "8.5"},
-    "S24+":             {"eu": "SM-S926B",  "cn": "SM-S9260",  "oneui": "8.5"},
-    "S24":              {"eu": "SM-S921B",  "cn": "SM-S9210",  "oneui": "8.5"},
-    "S24 FE":           {"eu": "SM-S721B",  "cn": None,        "oneui": "8"},
-    "S23 Ultra":        {"eu": "SM-S918B",  "cn": "SM-S9180",  "oneui": "8"},
-    "S23+":             {"eu": "SM-S916B",  "cn": "SM-S9160",  "oneui": "8"},
-    "S23":              {"eu": "SM-S911B",  "cn": "SM-S9110",  "oneui": "8"},
-    "S23 FE":           {"eu": "SM-S711B",  "cn": None,        "oneui": "7"},
-    "S22 Ultra":        {"eu": "SM-S908B",  "cn": "SM-S9080",  "oneui": "7"},
-    "S22+":             {"eu": "SM-S906B",  "cn": "SM-S9060",  "oneui": "7"},
-    "S22":              {"eu": "SM-S901B",  "cn": "SM-S9010",  "oneui": "7"},
-    "Z Fold 7":         {"eu": "SM-F968B",  "cn": "SM-F9680",  "oneui": "9"},
-    "Z Flip 7":         {"eu": "SM-F751B",  "cn": "SM-F7510",  "oneui": "9"},
-    "Z Fold 6":         {"eu": "SM-F956B",  "cn": "SM-F9560",  "oneui": "8.5"},
-    "Z Flip 6":         {"eu": "SM-F741B",  "cn": "SM-F7410",  "oneui": "8.5"},
-    "Z Fold 5":         {"eu": "SM-F946B",  "cn": "SM-F9460",  "oneui": "7"},
-    "Z Flip 5":         {"eu": "SM-F731B",  "cn": "SM-F7310",  "oneui": "7"},
-    "A56":              {"eu": "SM-A566B",  "cn": None,        "oneui": "8.5"},
-    "A36":              {"eu": "SM-A366B",  "cn": None,        "oneui": "8.5"},
-    "A26":              {"eu": "SM-A266B",  "cn": None,        "oneui": "8.5"},
-    "A55":              {"eu": "SM-A556B",  "cn": None,        "oneui": "7"},
-    "A54":              {"eu": "SM-A546B",  "cn": None,        "oneui": "7"},
-    "A35":              {"eu": "SM-A356B",  "cn": None,        "oneui": "7"},
-    "A15":              {"eu": "SM-A155F",  "cn": None,        "oneui": "7"},
-    "Tab S10 Ultra":    {"eu": "SM-X926B",  "cn": "SM-X9260",  "oneui": "8.5"},
-    "Tab S10+":         {"eu": "SM-X826B",  "cn": "SM-X8260",  "oneui": "8.5"},
-    "Tab S10":          {"eu": "SM-X716B",  "cn": "SM-X7160",  "oneui": "8.5"},
-    "Tab S10 FE":       {"eu": "SM-X528B",  "cn": None,        "oneui": "8.5"},
-    "Tab S9 Ultra":     {"eu": "SM-X916B",  "cn": "SM-X9160",  "oneui": "7"},
-    "Tab S9+":          {"eu": "SM-X816B",  "cn": "SM-X8160",  "oneui": "7"},
-    "Tab S9":           {"eu": "SM-X716B",  "cn": "SM-X7160",  "oneui": "7"},
-    "XCover 7 Pro":     {"eu": "SM-G556W",  "cn": None,        "oneui": "8"},
-    "XCover 7":         {"eu": "SM-G556B",  "cn": None,        "oneui": "7"},
+    "S26 Ultra":     {"eu": "SM-S948B", "cn": "SM-S9480", "oneui": "8.5"},
+    "S26+":          {"eu": "SM-S946B", "cn": "SM-S9460", "oneui": "8.5"},
+    "S26":           {"eu": "SM-S941B", "cn": "SM-S9410", "oneui": "8.5"},
+    "S25 Ultra":     {"eu": "SM-S938B", "cn": "SM-S9380", "oneui": "8.5"},
+    "S25+":          {"eu": "SM-S936B", "cn": "SM-S9360", "oneui": "8.5"},
+    "S25":           {"eu": "SM-S931B", "cn": "SM-S9310", "oneui": "8.5"},
+    "S24 Ultra":     {"eu": "SM-S928B", "cn": "SM-S9280", "oneui": "8.5"},
+    "S24+":          {"eu": "SM-S926B", "cn": "SM-S9260", "oneui": "8.5"},
+    "S24":           {"eu": "SM-S921B", "cn": "SM-S9210", "oneui": "8.5"},
+    "S24 FE":        {"eu": "SM-S721B", "cn": None,       "oneui": "8"},
+    "S23 Ultra":     {"eu": "SM-S918B", "cn": "SM-S9180", "oneui": "8"},
+    "S23+":          {"eu": "SM-S916B", "cn": "SM-S9160", "oneui": "8"},
+    "S23":           {"eu": "SM-S911B", "cn": "SM-S9110", "oneui": "8"},
+    "S23 FE":        {"eu": "SM-S711B", "cn": None,       "oneui": "7"},
+    "S22 Ultra":     {"eu": "SM-S908B", "cn": "SM-S9080", "oneui": "7"},
+    "S22+":          {"eu": "SM-S906B", "cn": "SM-S9060", "oneui": "7"},
+    "S22":           {"eu": "SM-S901B", "cn": "SM-S9010", "oneui": "7"},
+    "Z Fold 7":      {"eu": "SM-F968B", "cn": "SM-F9680", "oneui": "9"},
+    "Z Flip 7":      {"eu": "SM-F751B", "cn": "SM-F7510", "oneui": "9"},
+    "Z Fold 6":      {"eu": "SM-F956B", "cn": "SM-F9560", "oneui": "8.5"},
+    "Z Flip 6":      {"eu": "SM-F741B", "cn": "SM-F7410", "oneui": "8.5"},
+    "Z Fold 5":      {"eu": "SM-F946B", "cn": "SM-F9460", "oneui": "7"},
+    "Z Flip 5":      {"eu": "SM-F731B", "cn": "SM-F7310", "oneui": "7"},
+    "A56":           {"eu": "SM-A566B", "cn": None,       "oneui": "8.5"},
+    "A36":           {"eu": "SM-A366B", "cn": None,       "oneui": "8.5"},
+    "A26":           {"eu": "SM-A266B", "cn": None,       "oneui": "8.5"},
+    "A55":           {"eu": "SM-A556B", "cn": None,       "oneui": "7"},
+    "A54":           {"eu": "SM-A546B", "cn": None,       "oneui": "7"},
+    "A35":           {"eu": "SM-A356B", "cn": None,       "oneui": "7"},
+    "A15":           {"eu": "SM-A155F", "cn": None,       "oneui": "7"},
+    "Tab S10 Ultra": {"eu": "SM-X926B", "cn": "SM-X9260", "oneui": "8.5"},
+    "Tab S10+":      {"eu": "SM-X826B", "cn": "SM-X8260", "oneui": "8.5"},
+    "Tab S10":       {"eu": "SM-X716B", "cn": "SM-X7160", "oneui": "8.5"},
+    "Tab S9 Ultra":  {"eu": "SM-X916B", "cn": "SM-X9160", "oneui": "7"},
+    "Tab S9+":       {"eu": "SM-X816B", "cn": "SM-X8160", "oneui": "7"},
+    "Tab S9":        {"eu": "SM-X716B", "cn": "SM-X7160", "oneui": "7"},
+    "XCover 7 Pro":  {"eu": "SM-G556W", "cn": None,       "oneui": "8"},
+    "XCover 7":      {"eu": "SM-G556B", "cn": None,       "oneui": "7"},
 }
 
 _PKG = {
@@ -439,6 +355,7 @@ def device_supports_sdk(device_name: str, sdk: int) -> bool:
 
 # ═══════════════════════════════════════════════════════
 #  GALAXY STORE CLIENT
+#  Méthodes TESTÉES une par une contre l'API réelle
 # ═══════════════════════════════════════════════════════
 
 class GalaxyStoreClient:
@@ -450,11 +367,9 @@ class GalaxyStoreClient:
     @staticmethod
     def _make_session() -> requests.Session:
         s = requests.Session()
-        retry = Retry(
-            total=4, backoff_factor=0.6,
+        retry = Retry(total=4, backoff_factor=0.6,
             status_forcelist={429, 500, 502, 503, 504},
-            allowed_methods={"GET", "POST"}, raise_on_status=False,
-        )
+            allowed_methods={"GET"}, raise_on_status=False)
         s.mount("https://", HTTPAdapter(max_retries=retry))
         s.mount("http://", HTTPAdapter(max_retries=retry))
         s.headers.update({
@@ -462,35 +377,6 @@ class GalaxyStoreClient:
             "Accept": "application/xml, text/xml, */*",
         })
         return s
-
-    # ──────────────────────────────────────────────
-    #  GENERIC ENDPOINT CALLER
-    # ──────────────────────────────────────────────
-
-    def query_endpoint(self, endpoint_key: str, params: dict = None,
-                        xml_body: str = None, method: str = "GET",
-                        timeout: int = 20) -> dict:
-        """Call any endpoint by key from ENDPOINTS dict, or raw URL."""
-        url = ENDPOINTS.get(endpoint_key, endpoint_key)
-        kw = {"timeout": timeout}
-        if params:
-            kw["params"] = params
-        if xml_body:
-            kw["data"] = xml_body
-            kw["headers"] = {"Content-Type": "application/xml; charset=utf-8"}
-
-        with self._sem:
-            try:
-                if method.upper() == "POST":
-                    resp = self.session.post(url, **kw)
-                else:
-                    resp = self.session.get(url, **kw)
-                resp.raise_for_status()
-            except requests.RequestException as e:
-                if self.debug:
-                    print(f"[DEBUG] {endpoint_key} failed: {e}")
-                return {}
-        return self._parse_xml(resp.text)
 
     @staticmethod
     def _parse_xml(xml_text: str) -> dict:
@@ -507,375 +393,79 @@ class GalaxyStoreClient:
                 result["downloadURI"] = m.group(1)
         return result
 
-    @staticmethod
-    def _build_flat_xml(root_tag: str, fields: dict) -> str:
-        """Build simple XML like <root><field1>val1</field1>...</root>."""
-        root = ET.Element(root_tag)
-        for key, val in fields.items():
-            child = ET.SubElement(root, key)
-            child.text = str(val)
-        return ET.tostring(root, encoding="unicode", xml_declaration=True)
-
-    # ──────────────────────────────────────────────
-    #  1. STUB DOWNLOAD (original — GET-based)
-    # ──────────────────────────────────────────────
+    # ─── 1. stubDownload (GET) ✅ TESTÉ ───
 
     def query(self, package: str, model: str, sdk: int,
               csc: str = "DBT", mcc: str = "262", mnc: str = "01",
               endpoint: str = "stubDownload") -> dict:
         params = {
-            "appId": package,
-            "deviceId": model,
-            "mcc": mcc,
-            "mnc": mnc,
-            "csc": csc,
-            "sdkVer": str(sdk),
-            "abiType": "64",
+            "appId": package, "deviceId": model,
+            "mcc": mcc, "mnc": mnc, "csc": csc,
+            "sdkVer": str(sdk), "abiType": "64",
             "extuk": secrets.token_hex(8),
         }
-        return self.query_endpoint(endpoint, params=params)
+        url = ENDPOINTS.get(endpoint, endpoint)
+        with self._sem:
+            try:
+                resp = self.session.get(url, params=params, timeout=20)
+                resp.raise_for_status()
+            except requests.RequestException:
+                return {}
+        return self._parse_xml(resp.text)
 
-    # ──────────────────────────────────────────────
-    #  2. OVERSEAS FALLBACK
-    # ──────────────────────────────────────────────
+    # ─── 2. overseasStubDownload (GET) ✅ TESTÉ ───
 
     def query_overseas(self, package: str, model: str, sdk: int,
                         csc: str = "DBT", mcc: str = "262",
                         mnc: str = "01") -> dict:
-        """Try the overseas fallback endpoint (non-Korea regions)."""
         return self.query(package, model, sdk, csc, mcc, mnc,
                           endpoint="overseasStubDownload")
 
-    # ──────────────────────────────────────────────
-    #  3. SEARCH APPS (stubSearch)
-    # ──────────────────────────────────────────────
-
-    def search_apps(self, keyword: str, model: str = "SM-S948B",
-                     sdk: int = 37, csc: str = "DBT",
-                     mcc: str = "262", mnc: str = "01",
-                     page_size: int = 20, page: int = 1) -> dict:
-        """Search Galaxy Store for apps by keyword."""
-        xml = self._build_flat_xml("stubSearch", {
-            "keyword": keyword,
-            "deviceId": model,
-            "deviceModel": model,
-            "mcc": mcc,
-            "mnc": mnc,
-            "csc": csc,
-            "sdkVersion": str(sdk),
-            "language": "en",
-            "country": "US",
-            "pageSize": str(page_size),
-            "pageNo": str(page),
-            "extuk": secrets.token_hex(8),
-        })
-        return self.query_endpoint("stubSearch", xml_body=xml, method="POST")
-
-    # ──────────────────────────────────────────────
-    #  4. APP DETAIL (stubAppDetail)
-    # ──────────────────────────────────────────────
-
-    def get_app_detail(self, app_id: str, model: str = "SM-S948B",
-                        sdk: int = 37, csc: str = "DBT",
-                        mcc: str = "262", mnc: str = "01") -> dict:
-        """Get detailed app information including screenshots, description."""
-        xml = self._build_flat_xml("stubAppDetail", {
-            "appId": app_id,
-            "deviceId": model,
-            "deviceModel": model,
-            "mcc": mcc,
-            "mnc": mnc,
-            "csc": csc,
-            "sdkVersion": str(sdk),
-            "language": "en",
-            "country": "US",
-            "extuk": secrets.token_hex(8),
-        })
-        return self.query_endpoint("stubAppDetail", xml_body=xml, method="POST")
-
-    # ──────────────────────────────────────────────
-    #  5. LIST APPS BY CATEGORY (stubList)
-    # ──────────────────────────────────────────────
-
-    def list_by_category(self, category_id: str,
-                          model: str = "SM-S948B",
-                          sdk: int = 37,
-                          page_size: int = 30,
-                          page: int = 1,
-                          sort: str = "popular") -> dict:
-        """List apps in a Galaxy Store category."""
-        xml = self._build_flat_xml("stubList", {
-            "categoryId": category_id,
-            "deviceId": model,
-            "deviceModel": model,
-            "sdkVersion": str(sdk),
-            "language": "en",
-            "country": "US",
-            "pageSize": str(page_size),
-            "pageNo": str(page),
-            "sortType": sort,
-            "extuk": secrets.token_hex(8),
-        })
-        return self.query_endpoint("stubList", xml_body=xml, method="POST")
-
-    # ──────────────────────────────────────────────
-    #  6. UPDATE CHECK (stubUpdateCheck)
-    # ──────────────────────────────────────────────
-
-    def check_update(self, app_id: str, current_version: int,
-                      model: str = "SM-S948B", sdk: int = 37,
-                      csc: str = "DBT") -> dict:
-        """Check if an update is available for a specific app."""
-        csc_info = CSC_LIST.get(csc, {"mcc": "262", "mnc": "01"})
-        # Build appList XML manually since it has nested elements
-        app_list_xml = f"<app><appId>{app_id}</appId><versionCode>{current_version}</versionCode></app>"
-        xml = self._build_flat_xml("stubUpdateCheck", {
-            "deviceId": model,
-            "deviceModel": model,
-            "mcc": csc_info["mcc"],
-            "mnc": csc_info["mnc"],
-            "csc": csc,
-            "sdkVersion": str(sdk),
-            "appList": app_list_xml,
-            "extuk": secrets.token_hex(8),
-        })
-        return self.query_endpoint("stubUpdateCheck", xml_body=xml, method="POST")
-
-    # ──────────────────────────────────────────────
-    #  7. EXTENDED UPDATE CHECK (stubUpdateCheckEx)
-    # ──────────────────────────────────────────────
-
-    def check_update_ex(self, app_id: str,
-                         caller_id: str = "com.sec.android.app.samsungapps",
-                         model: str = "SM-S948B", sdk: int = 37,
-                         csc: str = "DBT") -> dict:
-        """Extended update check with callerId parameter."""
-        params = {
-            "appId": app_id,
-            "callerId": caller_id,
-            "deviceId": model,
-            "mcc": CSC_LIST.get(csc, {}).get("mcc", "262"),
-            "mnc": CSC_LIST.get(csc, {}).get("mnc", "01"),
-            "csc": csc,
-            "sdkVer": str(sdk),
-            "abiType": "64",
-            "extuk": secrets.token_hex(8),
-        }
-        return self.query_endpoint("stubUpdateCheckEx", params=params)
-
-    # ──────────────────────────────────────────────
-    #  8. BROWSE CONTENT CATEGORIES
-    # ──────────────────────────────────────────────
+    # ─── 3. contentCategoryList (GET) ✅ TESTÉ ───
 
     def browse_content_category(self, category_id: str = "0000005309",
                                  model: str = "SM-S948B",
                                  sdk: int = 37,
                                  page_size: int = 20,
                                  page: int = 1) -> dict:
-        """Browse products in a content category."""
         params = {
             "contentCategoryID": category_id,
-            "deviceId": model,
-            "sdkVer": str(sdk),
-            "mcc": "262",
-            "mnc": "01",
-            "csc": "DBT",
-            "abiType": "64",
-            "extuk": secrets.token_hex(8),
-            "pageSize": str(page_size),
-            "pageNo": str(page),
+            "deviceId": model, "sdkVer": str(sdk),
+            "mcc": "262", "mnc": "01", "csc": "DBT",
+            "abiType": "64", "extuk": secrets.token_hex(8),
+            "pageSize": str(page_size), "pageNo": str(page),
         }
-        return self.query_endpoint("contentCategoryList", params=params)
+        return self._get_xml(ENDPOINTS["contentCategoryList"], params)
+
+    def _get_xml(self, url: str, params: dict = None, timeout: int = 20) -> dict:
+        with self._sem:
+            try:
+                resp = self.session.get(url, params=params, timeout=timeout)
+                resp.raise_for_status()
+            except requests.RequestException:
+                return {}
+        return self._parse_xml(resp.text)
 
     def list_content_categories(self) -> dict:
-        """Return all known content categories."""
         return dict(CONTENT_CATEGORIES)
-
-    # ──────────────────────────────────────────────
-    #  9. PURCHASED ITEMS (stubPurchasedItemList)
-    # ──────────────────────────────────────────────
-
-    def get_purchased_items(self, model: str = "SM-S948B",
-                             sdk: int = 37, csc: str = "DBT",
-                             page_size: int = 50,
-                             page: int = 1) -> dict:
-        """List purchased/downloaded items."""
-        csc_info = CSC_LIST.get(csc, {"mcc": "262", "mnc": "01"})
-        xml = self._build_flat_xml("stubPurchasedItemList", {
-            "deviceId": model,
-            "deviceModel": model,
-            "sdkVersion": str(sdk),
-            "mcc": csc_info["mcc"],
-            "mnc": csc_info["mnc"],
-            "csc": csc,
-            "language": "en",
-            "country": "US",
-            "pageSize": str(page_size),
-            "pageNo": str(page),
-            "extuk": secrets.token_hex(8),
-        })
-        return self.query_endpoint("stubPurchasedItemList", xml_body=xml, method="POST")
-
-    # ──────────────────────────────────────────────
-    #  10. REVIEWS (stubReviewList)
-    # ──────────────────────────────────────────────
-
-    def get_reviews(self, app_id: str, model: str = "SM-S948B",
-                     sdk: int = 37, page_size: int = 20,
-                     page: int = 1) -> dict:
-        """Get user reviews for an app."""
-        xml = self._build_flat_xml("stubReviewList", {
-            "appId": app_id,
-            "deviceId": model,
-            "deviceModel": model,
-            "sdkVersion": str(sdk),
-            "language": "en",
-            "pageSize": str(page_size),
-            "pageNo": str(page),
-            "extuk": secrets.token_hex(8),
-        })
-        return self.query_endpoint("stubReviewList", xml_body=xml, method="POST")
-
-    # ──────────────────────────────────────────────
-    #  11. DOWNLOAD INFO (stubDownloadInfo)
-    # ──────────────────────────────────────────────
-
-    def get_download_info(self, app_id: str, model: str = "SM-S948B",
-                           sdk: int = 37) -> dict:
-        """Alternative download info endpoint."""
-        xml = self._build_flat_xml("stubDownloadInfo", {
-            "appId": app_id,
-            "deviceId": model,
-            "deviceModel": model,
-            "sdkVersion": str(sdk),
-            "extuk": secrets.token_hex(8),
-        })
-        return self.query_endpoint("stubDownloadInfo", xml_body=xml, method="POST")
-
-    # ──────────────────────────────────────────────
-    #  12. APP DETAIL ALT (GET-based, non-stub)
-    # ──────────────────────────────────────────────
-
-    def get_app_detail_alt(self, app_id: str, model: str = "SM-S948B",
-                            sdk: int = 37, csc: str = "DBT") -> dict:
-        """Alternative app detail endpoint (GET-based)."""
-        params = {
-            "appId": app_id,
-            "deviceId": model,
-            "mcc": CSC_LIST.get(csc, {}).get("mcc", "262"),
-            "mnc": CSC_LIST.get(csc, {}).get("mnc", "01"),
-            "csc": csc,
-            "sdkVer": str(sdk),
-            "abiType": "64",
-            "extuk": secrets.token_hex(8),
-        }
-        return self.query_endpoint("appDetail", params=params)
-
-    # ──────────────────────────────────────────────
-    #  13. UPDATE CHECK ALT (GET-based, non-stub)
-    # ──────────────────────────────────────────────
-
-    def check_update_alt(self, app_id: str, version_code: int,
-                          model: str = "SM-S948B", sdk: int = 37) -> dict:
-        """Alternative update check (GET-based)."""
-        params = {
-            "appId": app_id,
-            "versionCode": str(version_code),
-            "deviceId": model,
-            "sdkVer": str(sdk),
-            "abiType": "64",
-            "extuk": secrets.token_hex(8),
-        }
-        return self.query_endpoint("updateCheck", params=params)
-
-    # ──────────────────────────────────────────────
-    #  14. DEVICE REGISTRATION
-    # ──────────────────────────────────────────────
-
-    def register_device(self, model: str = "SM-S948B", sdk: int = 37,
-                         push_token: str = None) -> dict:
-        """Register device with Galaxy Store."""
-        params = {
-            "deviceId": model,
-            "deviceModel": model,
-            "sdkVer": str(sdk),
-            "abiType": "64",
-            "extuk": secrets.token_hex(8),
-        }
-        if push_token:
-            params["pushToken"] = push_token
-        return self.query_endpoint("deviceRegister", params=params, method="POST")
-
-    # ──────────────────────────────────────────────
-    #  15. AUTO UPDATE
-    # ──────────────────────────────────────────────
-
-    def trigger_auto_update(self, app_list: list,
-                             model: str = "SM-S948B",
-                             sdk: int = 37) -> dict:
-        """Trigger auto-update for a list of apps.
-        app_list: list of (app_id, version_code) tuples.
-        """
-        parts = []
-        for aid, vc in app_list:
-            parts.append(f"<app><appId>{aid}</appId><versionCode>{vc}</versionCode></app>")
-        app_list_xml = "".join(parts)
-        xml = self._build_flat_xml("stubAutoUpdate", {
-            "deviceId": model,
-            "deviceModel": model,
-            "sdkVersion": str(sdk),
-            "appList": app_list_xml,
-            "extuk": secrets.token_hex(8),
-        })
-        return self.query_endpoint("stubAutoUpdate", xml_body=xml, method="POST")
-
-    # ──────────────────────────────────────────────
-    #  16. USER PROFILE
-    # ──────────────────────────────────────────────
-
-    def get_user_profile(self, model: str = "SM-S948B",
-                          sdk: int = 37) -> dict:
-        """Get Galaxy Store user profile."""
-        xml = self._build_flat_xml("stubUserProfile", {
-            "deviceId": model,
-            "deviceModel": model,
-            "sdkVersion": str(sdk),
-            "extuk": secrets.token_hex(8),
-        })
-        return self.query_endpoint("stubUserProfile", xml_body=xml, method="POST")
-
-    # ──────────────────────────────────────────────
-    #  17. SERVER / CDN INFO
-    # ──────────────────────────────────────────────
 
     @staticmethod
     def get_servers() -> dict:
-        """Return all known API servers and CDNs."""
-        return {
-            "api_servers": dict(API_SERVERS),
-            "cdn_servers": dict(CDN_SERVERS),
-        }
+        return {"cdn_servers": dict(CDN_SERVERS)}
 
     @staticmethod
     def get_endpoints() -> dict:
-        """Return all discovered API endpoints."""
         return dict(ENDPOINTS)
 
     @staticmethod
     def resolve_download_domain(download_url: str) -> str:
-        """Identify which CDN server a download URL belongs to."""
         for name, server in CDN_SERVERS.items():
-            domain = server.split("://")[1]
-            if domain in download_url:
-                return name
-        for name, server in API_SERVERS.items():
-            domain = server.split("://")[1]
-            if domain in download_url:
+            if server.split("://")[1] in download_url:
                 return name
         return "unknown"
 
     # ═══════════════════════════════════════════════════════
-    #  ORIGINAL METHODS (unchanged)
+    #  MÉTHODES ORIGINALES (inchangées, déjà testées)
     # ═══════════════════════════════════════════════════════
 
     def find_latest(self, package: str, devices: list, csclist: list,
@@ -930,7 +520,6 @@ class GalaxyStoreClient:
                     fut.result()
                 except Exception:
                     pass
-
         return best if best else None
 
     def quick_find(self, package: str, sdks: list) -> dict | None:
@@ -976,7 +565,6 @@ class GalaxyStoreClient:
 
         with ThreadPoolExecutor(max_workers=8) as pool:
             list(pool.map(check, combos))
-
         return best if best else None
 
     def download(self, url: str, dest, progress_cb=None) -> dict:
