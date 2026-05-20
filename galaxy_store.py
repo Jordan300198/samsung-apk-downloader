@@ -190,9 +190,9 @@ FAST_COMBOS = [
 ]
 
 DEVICES = {
-    "S26 Ultra":        {"eu": "SM-S948B",  "cn": "SM-S9480",  "oneui": "9"},
-    "S26+":             {"eu": "SM-S946B",  "cn": "SM-S9460",  "oneui": "9"},
-    "S26":              {"eu": "SM-S941B",  "cn": "SM-S9410",  "oneui": "9"},
+    "S26 Ultra":        {"eu": "SM-S948B",  "cn": "SM-S9480",  "oneui": "8.5"},
+    "S26+":             {"eu": "SM-S946B",  "cn": "SM-S9460",  "oneui": "8.5"},
+    "S26":              {"eu": "SM-S941B",  "cn": "SM-S9410",  "oneui": "8.5"},
     "S25 Ultra":        {"eu": "SM-S938B",  "cn": "SM-S9380",  "oneui": "8.5"},
     "S25+":             {"eu": "SM-S936B",  "cn": "SM-S9360",  "oneui": "8.5"},
     "S25":              {"eu": "SM-S931B",  "cn": "SM-S9310",  "oneui": "8.5"},
