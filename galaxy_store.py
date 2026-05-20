@@ -420,7 +420,7 @@ def build_csc_list(region: str = "all") -> list:
             out.append((csc, info))
     return out
 
-def resolve_sdks(oneui_arg) -> list:
+def resolve_sdks(oneui_arg, _unused=None, _unused2=None) -> list:
     if oneui_arg:
         sdk = ONEUI_SDK.get(str(oneui_arg).strip())
         return [sdk or 36]
