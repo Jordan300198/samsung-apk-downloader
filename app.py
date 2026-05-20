@@ -22,6 +22,7 @@ from functools import partial
 from galaxy_store import (
     GalaxyStoreClient, SAMSUNG_PACKAGES, PACKAGE_CATEGORY,
     CATEGORIES, DEVICES, CSC_LIST, ONEUI_SDK, CAT_EMOJI,
+    ENDPOINTS, API_SERVERS, CDN_SERVERS, CONTENT_CATEGORIES,
     fmt_size, fmt_speed, fmt_time,
     build_device_list, build_csc_list, resolve_sdks,
 )
@@ -431,6 +432,217 @@ def api_ai_search():
 
     results = ai_search(q)
     return jsonify({"results": results})
+
+
+# ═══════════════════════════════════════════════════════
+#  NEW API ROUTES (Galaxy Store extended endpoints)
+#  Sources: Reddit, XDA, GitHub reverse engineering
+# ═══════════════════════════════════════════════════════
+
+# ── Content Categories (Galaxy Store browse) ──
+
+@app.route("/api/content-categories")
+def api_content_categories():
+    """List all Galaxy Store content categories (42 categories)."""
+    return jsonify({
+        "categories": get_client().list_content_categories()
+    })
+
+
+@app.route("/api/browse-category", methods=["POST"])
+def api_browse_category():
+    """Browse apps in a Galaxy Store content category."""
+    data = request.get_json() or {}
+    cat_id = data.get("category_id", "0000005309")
+    model = data.get("device", "SM-S948B")
+    sdk = data.get("sdk", 37)
+    page = data.get("page", 1)
+    page_size = data.get("page_size", 20)
+
+    result = get_client().browse_content_category(cat_id, model, sdk, page_size, page)
+    return jsonify({
+        "category_id": cat_id,
+        "category_name": CONTENT_CATEGORIES.get(cat_id, "Unknown"),
+        "result": result,
+    })
+
+
+# ── Live Galaxy Store Search (stubSearch) ──
+
+@app.route("/api/search-galaxy", methods=["POST"])
+def api_search_galaxy():
+    """Live search the Galaxy Store for apps by keyword."""
+    data = request.get_json() or {}
+    keyword = data.get("keyword", "").strip()
+    if not keyword:
+        return jsonify({"error": "Keyword required"}), 400
+
+    model = data.get("device", "SM-S948B")
+    sdk = data.get("sdk", 37)
+    csc = data.get("csc", "DBT")
+
+    result = get_client().search_apps(keyword, model, sdk, csc)
+    return jsonify({
+        "keyword": keyword,
+        "result": result,
+    })
+
+
+# ── App Detail (stubAppDetail) ──
+
+@app.route("/api/app-detail", methods=["POST"])
+def api_app_detail():
+    """Get detailed info about a Galaxy Store app."""
+    data = request.get_json() or {}
+    app_id = data.get("app_id", "").strip()
+    if not app_id:
+        return jsonify({"error": "app_id required"}), 400
+
+    model = data.get("device", "SM-S948B")
+    sdk = data.get("sdk", 37)
+    csc = data.get("csc", "DBT")
+
+    result = get_client().get_app_detail(app_id, model, sdk, csc)
+    return jsonify({
+        "app_id": app_id,
+        "result": result,
+    })
+
+
+# ── Alternative App Detail (GET-based) ──
+
+@app.route("/api/app-detail-alt", methods=["POST"])
+def api_app_detail_alt():
+    """Alternative app detail endpoint (GET-based)."""
+    data = request.get_json() or {}
+    app_id = data.get("app_id", "").strip()
+    if not app_id:
+        return jsonify({"error": "app_id required"}), 400
+
+    result = get_client().get_app_detail_alt(app_id)
+    return jsonify({
+        "app_id": app_id,
+        "result": result,
+    })
+
+
+# ── Update Check ──
+
+@app.route("/api/check-update", methods=["POST"])
+def api_check_update():
+    """Check if an update is available for an app."""
+    data = request.get_json() or {}
+    app_id = data.get("app_id", "").strip()
+    version_code = data.get("version_code", 0)
+    if not app_id:
+        return jsonify({"error": "app_id required"}), 400
+
+    result = get_client().check_update(app_id, int(version_code))
+    return jsonify({
+        "app_id": app_id,
+        "current_version": version_code,
+        "result": result,
+    })
+
+
+# ── Extended Update Check ──
+
+@app.route("/api/check-update-ex", methods=["POST"])
+def api_check_update_ex():
+    """Extended update check with callerId."""
+    data = request.get_json() or {}
+    app_id = data.get("app_id", "").strip()
+    if not app_id:
+        return jsonify({"error": "app_id required"}), 400
+
+    result = get_client().check_update_ex(app_id)
+    return jsonify({
+        "app_id": app_id,
+        "result": result,
+    })
+
+
+# ── List by Category (stubList) ──
+
+@app.route("/api/list-by-category", methods=["POST"])
+def api_list_by_category():
+    """List apps in a Galaxy Store category."""
+    data = request.get_json() or {}
+    cat_id = data.get("category_id", "")
+    if not cat_id:
+        return jsonify({"error": "category_id required"}), 400
+
+    result = get_client().list_by_category(cat_id)
+    return jsonify({
+        "category_id": cat_id,
+        "result": result,
+    })
+
+
+# ── Reviews ──
+
+@app.route("/api/reviews", methods=["POST"])
+def api_reviews():
+    """Get user reviews for an app."""
+    data = request.get_json() or {}
+    app_id = data.get("app_id", "").strip()
+    if not app_id:
+        return jsonify({"error": "app_id required"}), 400
+
+    result = get_client().get_reviews(app_id)
+    return jsonify({
+        "app_id": app_id,
+        "result": result,
+    })
+
+
+# ── Downloaded / Purchased Items ──
+
+@app.route("/api/purchased", methods=["POST"])
+def api_purchased():
+    """List purchased/downloaded items."""
+    result = get_client().get_purchased_items()
+    return jsonify({"result": result})
+
+
+# ── Servers, Endpoints & CDN Info ──
+
+@app.route("/api/servers")
+def api_servers():
+    """List all known API servers and CDNs."""
+    return jsonify(get_client().get_servers())
+
+
+@app.route("/api/endpoints")
+def api_endpoints():
+    """List all discovered API endpoints."""
+    eps = dict(ENDPOINTS)
+    return jsonify({
+        "count": len(eps),
+        "endpoints": eps,
+    })
+
+
+@app.route("/api/resolve-cdn")
+def api_resolve_cdn():
+    """Identify which CDN server a download URL belongs to."""
+    url = request.args.get("url", "")
+    if not url:
+        return jsonify({"error": "url parameter required"}), 400
+    return jsonify({
+        "url": url,
+        "cdn": get_client().resolve_download_domain(url),
+    })
+
+
+@app.route("/api/register-device", methods=["POST"])
+def api_register_device():
+    """Register a device with Galaxy Store."""
+    data = request.get_json() or {}
+    model = data.get("device", "SM-S948B")
+    push_token = data.get("push_token")
+    result = get_client().register_device(model, push_token=push_token)
+    return jsonify({"result": result})
 
 
 # ── Health check (for Render) ──
