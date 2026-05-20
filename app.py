@@ -649,7 +649,7 @@ def api_register_device():
 
 @app.route("/health")
 def health():
-    return jsonify({"status": "ok", "version": "4.0.0"})
+    return jsonify({"status": "ok", "version": "4.1.0"})
 
 # ── Pages ──
 
